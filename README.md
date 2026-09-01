@@ -10,6 +10,6 @@ Open-CV image processing demos.
 
 ## Resources
 
-![OpenCV](opencv-logo.png)
+<img src="opencv-logo.png" alt="OpenCV logo" width="150" />
 
 [Open-CV](https://opencv.org/)
