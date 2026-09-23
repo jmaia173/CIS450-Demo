@@ -1,0 +1,156 @@
+==============================================================================
+AI JOURNAL - CIS450 Emergent Technologies - Week 5B: AI Chatbot Coding
+Student: Joao (GitHub: jmaia173)        Date: 9/23/2026
+AI tool used: Claude (claude.ai chat)
+Repo/branch: CIS450-Demo / ai-panorama
+==============================================================================
+
+1. ASSIGNMENT AND GOAL
+------------------------------------------------------------------------------
+Modify my existing panorama.py (OpenCV Stitcher API) so it stitches as many of
+the 8 supplied images (1-640x480.png ... 8-640x480.png) as possible.
+Starting point: the original code stitched only 3 of 8 images. The professor
+stitched 7 by changing stitching parameters and stitching in a particular order
+and in a hierarchical fashion (hints for the AI).
+Deliverables: ai-panorama.py, ai-panorama.jpg, this journal, and a pull request.
+
+
+2. GIT SETUP (done before using the AI for code)
+------------------------------------------------------------------------------
+- git fetch / git checkout main / git pull (got the latest main)
+- git checkout -b ai-panorama
+- git push failed with "no upstream branch"; fixed with
+  git push --set-upstream origin ai-panorama
+- Created the ai-panorama folder, extracted the 8 images into it, and copied
+  panorama.py to ai-panorama/ai-panorama.py.
+
+
+3. TIMELINE OF AI INTERACTIONS
+------------------------------------------------------------------------------
+
+INTERACTION 1 - Handing Claude the assignment
+  What I gave Claude: the Week 5B slides (PDF), a screenshot of my VS Code
+  after creating/pushing the branch, and the homework text.
+  What Claude did: laid out the steps and wrote a first, standalone version of
+  a stitching script that swept parameters and used a hierarchical/greedy
+  fallback. It tested it on synthetic overlapping images in its own sandbox
+  (it did not have my real photos).
+  Why it was useful: it turned the slide hints (parameters, order,
+  hierarchical) into a concrete plan. But it was not based on my code yet, so
+  I gave it my real panorama.py next.
+
+INTERACTION 2 - Rebuilding on my own panorama.py
+  What I gave Claude: the full text of my panorama.py (argparse options
+  --mode, --output, --conf, --match-conf, and the report_used_images()
+  diagnostic).
+  What Claude gave me: a new ai-panorama.py that keeps my structure and CLI
+  and adds three strategies; the one that stitches the most images wins:
+    1. All at once, sweeping parameters (mode, confidence threshold, etc.)
+    2. Hierarchical: stitch neighbouring images in pairs, then stitch the
+       results (the professor's hint)
+    3. Greedy chain: grow one panorama left to right, skipping images that
+       fail to stitch
+  Outcome: I ran it, but the terminal output still showed my ORIGINAL code
+  (it saved result.jpg and listed the old --conf option). Claude noticed from
+  the screenshot that the file was never replaced, and gave me the complete
+  new file contents to paste over ai-panorama.py.
+  Lesson: check that the file that runs is the file I think I edited.
+
+INTERACTION 3 - "It did not stitch all the images" (the important debugging)
+  What I gave Claude: screenshots of the output image and the terminal.
+  Symptoms: the script printed "8 of 8 images stitched", but the panorama was
+  only 1285x449 and visibly contained only about 3 images (the same result as
+  the original code).
+  Claude's diagnosis - three bugs in its own code:
+    a) OpenCV's Stitcher.stitch() returns status OK even when it silently
+       drops images it can't connect. The script counted the images it was
+       GIVEN, not the images actually USED.
+    b) The parameter sweep stopped at the first status OK, which was
+       panoConfidenceThresh = 1.0. That strict threshold is what drops the
+       weakly-matched images. My own diagnostic (match-conf 0.3) had already
+       said all 8 images can match, and that is a different setting from the
+       stitcher's panoConfidenceThresh.
+    c) The "SIFT vs ORB" sweep did nothing: in the Python API Claude tested,
+       Stitcher has no setFeaturesFinder, and the script's try/except hid the
+       error, so the label "SIFT" in the settings output was meaningless.
+  The fix (final ai-panorama.py):
+    - Read the images actually used from stitcher.component() and compare that
+      to the number of input images.
+    - Sweep parameters and keep the attempt that uses the MOST images, only
+      stopping early when all images are used.
+    - Confidence threshold swept from 1.0 down to 0.1 (strictest first, so the
+      cleanest result wins).
+    - Also sweep mode (PANORAMA vs SCANS), wave correction on/off, and a 2x
+      upscale of the inputs (with the registration resolution raised so they
+      aren't downscaled again) to give feature detection more detail.
+    - Pair merges in the hierarchical and greedy strategies are only accepted
+      if BOTH images were really used.
+    - Removed the fake SIFT/ORB sweep.
+    - Prints the output size so a "success" that is too small is obvious.
+
+INTERACTION 4 - Confirming the result
+  I re-ran: python ai-panorama.py *-640x480.png
+  All 8 images stitched, which was one more than the professor's 7.
+
+
+4. HOW PANORAMA STITCHING WORKS (what I learned)
+------------------------------------------------------------------------------
+The OpenCV Stitcher pipeline, roughly:
+  1. Detect features (keypoints/descriptors) in every image.
+  2. Match features between image pairs and compute how confident each pair
+     match is.
+  3. Drop images whose matches are too weak to connect to the main group
+     (this is where panoConfidenceThresh matters).
+  4. Estimate camera rotations for the connected images; wave correction
+     straightens the horizon across a wide panorama.
+  5. Warp images onto a common surface, find seams, and blend them.
+Parameters that mattered:
+  - panoConfidenceThresh: lower values let weaker-overlap images join.
+    1.0 dropped images; lower values kept more.
+  - mode: PANORAMA (rotation about a point) vs SCANS (affine, flat scenes).
+  - wave correction: on/off changes how the horizon bends.
+  - image size/registration resolution: bigger inputs can give the feature
+    detector more to work with.
+  - image order: I pass the images left to right so neighbours overlap.
+Why hierarchical stitching can help: each merge only has to match a couple of
+images, and the merged result then acts as one bigger image with more features
+for the next merge.
+
+
+5. FINAL RESULTS (copy these from my terminal output)
+------------------------------------------------------------------------------
+Command: python ai-panorama.py *-640x480.png
+Images stitched: 8 of 8
+Original code: 3 of 8      Professor: 7 of 8
+Strategy that won: all at once (strategy 1); no fallback needed
+"settings:" line from terminal: PANORAMA, conf=0.7, wave=True, scale=1x
+Output size (from terminal): 2847x461 (vs 1285x449 from the buggy run)
+Output file: ai-panorama/ai-panorama.jpg
+Anything odd in the image (warping at the edges, seams, black borders):
+______________________
+
+
+6. WHAT WORKED, WHAT DIDN'T
+------------------------------------------------------------------------------
+Worked:
+  - Giving Claude my real code plus the professor's hints (parameters,
+    hierarchical), then testing and reporting back with screenshots.
+  - Adding a diagnostic (report_used_images) earlier gave a way to see which
+    images were being dropped.
+  - Lowering the confidence threshold and counting images actually used.
+Didn't work at first:
+  - Claude's first versions reported success wrongly (counted input images,
+    stopped at the first OK result, and a SIFT/ORB sweep that never applied).
+  - I ran the old file by mistake before the new code was pasted in.
+What I would do differently: always verify AI-generated code against the real
+output (image size and a visual check), not just the printed success message.
+
+
+7. REFLECTION 
+------------------------------------------------------------------------------
+AI was helpful for turning the professor's hints into working code quickly and
+for explaining which parameter was responsible for the dropped images. It also
+made confident mistakes, so I needed to test on the real images and push back
+when the output did not match what the code claimed. Next I could try
+other blending options or maybe even moving the beginning and end images around to see if they worked!
+==============================================================================
