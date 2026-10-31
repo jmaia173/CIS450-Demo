@@ -42,14 +42,21 @@ h1 {
   line-height: 1;
 }
 
-.score {
+.game-stats {
+  display: flex;
+  gap: 20px;
+}
+
+.score,
+.lives {
   margin: 0;
   color: #cbd3e4;
   font-size: 1.05rem;
   font-weight: 600;
 }
 
-.score span {
+.score span,
+.lives span {
   display: inline-block;
   min-width: 2ch;
   margin-left: 6px;

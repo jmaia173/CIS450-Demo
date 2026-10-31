@@ -3,6 +3,7 @@
 const canvas = document.querySelector("#game");
 const context = canvas.getContext("2d");
 const scoreDisplay = document.querySelector("#score");
+const livesDisplay = document.querySelector("#lives");
 const statusDisplay = document.querySelector("#status");
 const startButton = document.querySelector("#start-button");
 
@@ -11,28 +12,32 @@ const HEIGHT = canvas.height;
 const paddle = { width: 112, height: 12, x: (WIDTH - 112) / 2, y: HEIGHT - 36, speed: 440 };
 const ball = { radius: 8, x: WIDTH / 2, y: HEIGHT - 58, speedX: 210, speedY: -300 };
 const keys = { left: false, right: false };
-const brickRows = 3;
+const brickRows = 5;
 const brickColumns = 10;
 const brickHeight = 22;
 const brickGap = 4;
 const brickTop = 54;
+const brickColors = ["#FF0000", "#FFA500", "#FFFF00", "#008000", "#0000FF"];
 const bricks = [];
 
 let score = 0;
+let lives = 3;
 let gameState = "ready";
 let previousFrameTime = 0;
 
 function resetBricks() {
   bricks.length = 0;
-  const brickWidth = (WIDTH - brickGap * (brickColumns - 1)) / brickColumns;
+  const brickWidth = (WIDTH - brickGap * (brickColumns - 1)) / (brickColumns + 1);
+  const sideMargin = brickWidth / 2;
 
   for (let row = 0; row < brickRows; row += 1) {
     for (let column = 0; column < brickColumns; column += 1) {
       bricks.push({
-        x: column * (brickWidth + brickGap),
+        x: sideMargin + column * (brickWidth + brickGap),
         y: brickTop + row * (brickHeight + brickGap),
         width: brickWidth,
-        height: brickHeight
+        height: brickHeight,
+        color: brickColors[row]
       });
     }
   }
@@ -48,7 +53,9 @@ function resetBallAndPaddle() {
 
 function resetGame() {
   score = 0;
+  lives = 3;
   scoreDisplay.textContent = String(score);
+  livesDisplay.textContent = String(lives);
   keys.left = false;
   keys.right = false;
   resetBricks();
@@ -60,8 +67,7 @@ function resetGame() {
 }
 
 function startGame() {
-  if (gameState === "playing") return;
-  if (gameState === "won" || gameState === "lost") resetGame();
+  if (gameState !== "ready" && gameState !== "waiting") return;
 
   gameState = "playing";
   statusDisplay.textContent = "Game in progress. Keep the ball above the paddle!";
@@ -70,18 +76,17 @@ function startGame() {
 
 function finishGame(state) {
   gameState = state;
-  resetBallAndPaddle();
 
   if (state === "won") {
     statusDisplay.textContent = "You Win! All bricks have been cleared.";
   } else {
-    statusDisplay.textContent = "Game Over. Press Restart Game or Space to play again.";
+    statusDisplay.textContent = "Game Over. Press Restart Game to play again.";
   }
 }
 
 function drawBricks() {
-  context.fillStyle = "#4169E1";
   for (const brick of bricks) {
+    context.fillStyle = brick.color;
     context.fillRect(brick.x, brick.y, brick.width, brick.height);
   }
 }
@@ -101,18 +106,19 @@ function draw() {
   context.fill();
 
   if (gameState !== "playing") {
-    const message = gameState === "ready"
-      ? "PRESS START OR SPACE"
-      : gameState === "won"
-        ? "YOU WIN!"
-        : "GAME OVER";
+    const messages = {
+      ready: "PRESS START OR SPACE",
+      waiting: "PRESS SPACE TO LAUNCH",
+      won: "YOU WIN!",
+      lost: "GAME OVER"
+    };
     context.fillStyle = "#101522cc";
     context.fillRect(0, HEIGHT / 2 - 30, WIDTH, 60);
     context.fillStyle = "#ffffff";
     context.font = "700 22px system-ui, sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.fillText(message, WIDTH / 2, HEIGHT / 2);
+    context.fillText(messages[gameState], WIDTH / 2, HEIGHT / 2);
   }
 }
 
@@ -203,7 +209,22 @@ function update(deltaTime) {
     ball.speedY = -Math.sqrt(330 * 330 - ball.speedX * ball.speedX);
   }
 
-  if (ball.y - ball.radius > paddle.y + paddle.height) finishGame("lost");
+  if (ball.y - ball.radius > paddle.y + paddle.height) loseLife();
+}
+
+function loseLife() {
+  lives -= 1;
+  livesDisplay.textContent = String(lives);
+
+  if (lives === 0) {
+    finishGame("lost");
+    return;
+  }
+
+  resetBallAndPaddle();
+  gameState = "waiting";
+  statusDisplay.textContent = `Life lost. ${lives} ${lives === 1 ? "life" : "lives"} left. Press Space or Launch Ball to continue.`;
+  startButton.textContent = "Launch Ball";
 }
 
 function frame(timestamp) {
@@ -236,7 +257,7 @@ window.addEventListener("blur", () => {
   keys.right = false;
 });
 startButton.addEventListener("click", (event) => {
-  if (gameState === "ready") {
+  if (gameState === "ready" || gameState === "waiting") {
     startGame();
   } else {
     resetGame();
@@ -246,5 +267,7 @@ startButton.addEventListener("click", (event) => {
 
 resetBricks();
 resetBallAndPaddle();
+scoreDisplay.textContent = String(score);
+livesDisplay.textContent = String(lives);
 draw();
 window.requestAnimationFrame(frame);

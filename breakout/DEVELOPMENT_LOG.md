@@ -41,3 +41,14 @@ Modified `SPEC.md` to look more like the classic Breakout:
 - Added 3 lives. Losing a ball keeps the score and bricks, and the game is over only after the third miss.
 - Added a lives display and a requirement that the restart button works during active play.
 - Removed requirements that conflicted with these changes (royal blue bricks, no side gaps, game over after one miss).
+
+
+## Second Prompt
+
+Read `AGENTS.md`, `SPEC.md`, and `LICENSE` before beginning.
+
+`SPEC.md` has been updated. Modify the existing Breakout game so it matches the revised `SPEC.md`, following `AGENTS.md` and the licensing requirements in `LICENSE`. Preserve working behavior that the spec does not change, and avoid rewriting unrelated code.
+
+If any requirements in `SPEC.md` conflict, tell me and explain how you interpreted them.
+
+After the changes, summarize which files you modified, explain how to run the game, and describe how to test it against `SPEC.md`. Be honest about any tests you have not actually performed.
