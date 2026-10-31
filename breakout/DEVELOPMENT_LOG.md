@@ -52,3 +52,19 @@ Read `AGENTS.md`, `SPEC.md`, and `LICENSE` before beginning.
 If any requirements in `SPEC.md` conflict, tell me and explain how you interpreted them.
 
 After the changes, summarize which files you modified, explain how to run the game, and describe how to test it against `SPEC.md`. Be honest about any tests you have not actually performed.
+
+
+## Second Test
+
+1. Five rows of bricks, colored red, orange, yellow, green, blue from top to bottom: PASS
+2. Half-brick gap on the left and right sides of the formation: PASS
+3. Lives display starts at 3: PASS
+4. Paddle moves with arrow keys, stops on release, and stays inside the boundaries: PASS
+5. Ball bounces off the walls and paddle: PASS
+6. Bricks disappear when hit and the score increases by 1: PASS
+7. Missing the ball costs one life and keeps the score and remaining bricks: PASS
+8. Ball and paddle reset and wait for launch after a nonfatal miss: PASS
+9. Game Over appears after the third miss and the ball stops: PASS
+10. Restart during active play returns to the ready state with score 0 and 3 lives: PASS
+11. Restart after Game Over starts a fresh game with all 50 bricks: PASS
+12. Clearing all 50 bricks shows the win state: PASS
