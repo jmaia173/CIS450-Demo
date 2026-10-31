@@ -49,6 +49,8 @@ function resetBallAndPaddle() {
 function resetGame() {
   score = 0;
   scoreDisplay.textContent = String(score);
+  keys.left = false;
+  keys.right = false;
   resetBricks();
   resetBallAndPaddle();
   gameState = "ready";
@@ -233,9 +235,13 @@ window.addEventListener("blur", () => {
   keys.left = false;
   keys.right = false;
 });
-startButton.addEventListener("click", () => {
-  if (gameState === "playing") resetGame();
-  startGame();
+startButton.addEventListener("click", (event) => {
+  if (gameState === "ready") {
+    startGame();
+  } else {
+    resetGame();
+  }
+  event.currentTarget.blur();
 });
 
 resetBricks();
