@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Breakout</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="game.js" defer></script>
+  </head>
+  <body>
+    <main class="game">
+      <header class="game-header">
+        <div>
+          <p class="eyebrow">ARCADE CLASSIC</p>
+          <h1>Breakout</h1>
+        </div>
+        <div class="game-stats" aria-live="polite">
+          <p class="score">Score <span id="score">0</span></p>
+          <p class="lives">Lives <span id="lives">3</span></p>
+        </div>
+      </header>
+
+      <div class="game-frame">
+        <canvas
+          id="game"
+          width="800"
+          height="520"
+          role="img"
+          aria-label="Breakout game. Use the left and right arrow keys to move the paddle."
+        >
+          Your browser does not support the canvas element.
+        </canvas>
+      </div>
+
+      <section class="game-controls" aria-label="Game controls">
+        <p id="status" aria-live="polite">Press Start Game or Space to launch the ball.</p>
+        <button id="start-button" type="button">Start Game</button>
+      </section>
+      <p class="instructions">Move with ← and →. Release a key to stop the paddle.</p>
+    </main>
+  </body>
+</html>
