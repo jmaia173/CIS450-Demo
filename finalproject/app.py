@@ -10,7 +10,10 @@ What it does:
      and reports how much the photo exposes.
   3. Detects faces with an OpenCV Haar cascade and hides each one with a blur,
      a pixelation, or a black box. The blur size scales with the face size.
-  4. Returns the protected photo as a download. The download has NO metadata
+  4. Lets the person draw their own boxes on the photo (to hide anything the
+     detector missed, like a license plate) or click a box to remove it, then
+     re-applies the hiding through the /refine route.
+  5. Returns the protected photo as a download. The download has NO metadata
      because OpenCV writes a brand new JPEG file.
 
 Privacy design: uploads are processed in memory and are never written to disk.
@@ -23,12 +26,13 @@ In browser: http://localhost
 
 import base64
 import io
+import json
 import os
 import socket
 
 import cv2
 import numpy as np
-from flask import Flask, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request
 from PIL import ExifTags, Image, ImageOps
 
 # HEIC support is optional: iPhone photos are HEIC by default.
@@ -47,6 +51,8 @@ MAX_SIDE = 1600          # longest edge, in pixels, of the processed photo
 DETECT_SIDE = 800        # face detection runs on a smaller copy to save CPU
 MAX_UPLOAD_MB = 8        # reject bigger uploads
 FACE_PADDING = 0.15      # grow each face box by 15% so hair/chin are covered
+MAX_REGIONS = 50         # most boxes accepted from the browser in one request
+MIN_REGION = 4           # boxes smaller than this many pixels are ignored
 MODES = {"blur": "Blur", "pixelate": "Pixelate", "box": "Black box"}
 
 app = Flask(__name__)
@@ -250,14 +256,56 @@ def hide_region(region, mode, strength):
     return cv2.GaussianBlur(region, (kernel, kernel), 0)
 
 
-def protect_faces(bgr, boxes, mode, strength):
-    """Return a copy of the image with every box hidden. The original is untouched."""
+def protect_regions(bgr, regions, mode, strength):
+    """Return a copy of the image with every region hidden. The original is untouched.
+
+    regions - list of (x0, y0, x1, y1) pixel boxes, already padded and inside the image.
+    Face boxes and hand-drawn boxes are treated the same way here.
+    """
     out = bgr.copy()
-    height, width = out.shape[:2]
-    for box in boxes:
-        x0, y0, x1, y1 = pad_box(box, width, height)
+    for x0, y0, x1, y1 in regions:
         out[y0:y1, x0:x1] = hide_region(out[y0:y1, x0:x1], mode, strength)
     return out
+
+
+def parse_regions(text, img_width, img_height):
+    """Turn the browser's JSON list of boxes into safe (x0, y0, x1, y1) tuples.
+
+    The browser is not trusted, so this handles bad JSON, wrong shapes, boxes
+    that stick out of the image (clamped), tiny boxes (skipped), and caps the
+    list at MAX_REGIONS.
+    """
+    # Section 1: decode the JSON and make sure it is a list
+    try:
+        raw = json.loads(text)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(raw, list):
+        return []
+
+    # Section 2: clean each box
+    regions = []
+    for item in raw[:MAX_REGIONS]:
+        try:
+            x0, y0, x1, y1 = (int(round(float(v))) for v in item)
+        except (TypeError, ValueError, OverflowError):
+            continue  # not four numbers: skip this box
+        x0, x1 = sorted((x0, x1))   # allow boxes drawn right-to-left or bottom-to-top
+        y0, y1 = sorted((y0, y1))
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(img_width, x1), min(img_height, y1)
+        if x1 - x0 >= MIN_REGION and y1 - y0 >= MIN_REGION:
+            regions.append((x0, y0, x1, y1))
+    return regions
+
+
+def read_options():
+    """Read the hiding mode and strength from the submitted form, within limits."""
+    mode = request.form.get("mode", "pixelate")
+    if mode not in MODES:
+        mode = "pixelate"
+    strength = min(10, max(1, request.form.get("strength", 6, type=int)))
+    return mode, strength
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +368,14 @@ PAGE = """
   @media (min-width: 720px) { .images { grid-template-columns: 1fr 1fr; } }
   .images img { width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--line); }
   .caption { font-weight: 600; margin: 0 0 6px; }
+  .stage { position: relative; }
+  .stage img { display: block; }
+  .stage canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+                  touch-action: none; cursor: crosshair; border-radius: 6px; }
+  button.secondary { background: #fff; color: var(--navy); border: 2px solid var(--navy); }
+  button.secondary:hover { background: #e4e9f1; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
   .risk { display: inline-block; color: #fff; font-weight: 800; padding: 4px 12px;
           border-radius: 4px; }
   .risk.High { background: var(--high); } .risk.Medium { background: var(--medium); }
@@ -369,19 +425,140 @@ PAGE = """
   {% if result %}
   <div class="panel">
     <h2 style="margin-top:0">Result</h2>
-    <p>{{ result.faces }} face{{ '' if result.faces == 1 else 's' }} hidden.
+    <p id="count_text">{{ result.count }} area{{ '' if result.count == 1 else 's' }} hidden.
        Your download has all metadata removed.</p>
+    <p class="note"><strong>Missed something?</strong> Drag on the Original photo to draw a box
+       around anything that should be hidden (a face, license plate, document). Click inside a box
+       to remove it. Pick a mode and strength above, then press Apply.
+       {% if result.count == 0 %}No faces were found automatically; detection works best on faces
+       that look toward the camera.{% endif %}</p>
     <div class="images">
-      <div><p class="caption">Original</p><img src="{{ result.original }}" alt="Original photo"></div>
-      <div><p class="caption">Protected</p><img src="{{ result.protected }}" alt="Protected photo"></div>
+      <div>
+        <p class="caption">Original (draw boxes here)</p>
+        <div class="stage">
+          <img id="orig" src="{{ result.original }}" alt="Original photo">
+          <canvas id="overlay" width="{{ result.width }}" height="{{ result.height }}"
+                  aria-label="Draw boxes over the photo"></canvas>
+        </div>
+      </div>
+      <div><p class="caption">Protected</p><img id="prot" src="{{ result.protected }}" alt="Protected photo"></div>
     </div>
-    <p style="margin-top:16px">
-      <a class="button gold" download="privacyshield.jpg" href="{{ result.protected }}">Download protected photo</a>
-    </p>
-    {% if result.faces == 0 %}
-    <p class="note">No faces were found. Detection works best on faces that look toward the camera.</p>
-    {% endif %}
+    <div class="actions">
+      <button type="button" id="apply">Apply boxes</button>
+      <button type="button" id="clear" class="secondary">Remove all boxes</button>
+      <a class="button gold" id="download" download="privacyshield.jpg" href="{{ result.protected }}">Download protected photo</a>
+    </div>
+    <p id="status" class="note" role="status"></p>
   </div>
+  <script>
+  (function () {
+    // The boxes to hide, in pixels of the processed photo: [x0, y0, x1, y1].
+    // They start as the faces the server found; the person can add or remove boxes.
+    var regions = {{ result.regions|tojson }};
+    var canvas = document.getElementById('overlay');
+    var ctx = canvas.getContext('2d');
+    var drag = null;  // the box being drawn right now, or null
+
+    // Convert a pointer event to photo-pixel coordinates (the canvas is scaled by CSS).
+    function toPhoto(e) {
+      var r = canvas.getBoundingClientRect();
+      return [(e.clientX - r.left) * canvas.width / r.width,
+              (e.clientY - r.top) * canvas.height / r.height];
+    }
+
+    // Draw every box (and the one being dragged) on top of the original photo.
+    function redraw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.lineWidth = Math.max(2, canvas.width / 250);
+      ctx.strokeStyle = '#f2b705';
+      ctx.fillStyle = 'rgba(242, 183, 5, 0.18)';
+      regions.forEach(function (b) {
+        ctx.fillRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+        ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+      });
+      if (drag) {
+        ctx.setLineDash([10, 6]);
+        ctx.strokeRect(drag[0], drag[1], drag[2] - drag[0], drag[3] - drag[1]);
+        ctx.setLineDash([]);
+      }
+    }
+
+    // Start a new box where the pointer goes down.
+    canvas.addEventListener('pointerdown', function (e) {
+      canvas.setPointerCapture(e.pointerId);
+      var p = toPhoto(e);
+      drag = [p[0], p[1], p[0], p[1]];
+    });
+
+    // Stretch the new box while the pointer moves.
+    canvas.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var p = toPhoto(e);
+      drag[2] = p[0];
+      drag[3] = p[1];
+      redraw();
+    });
+
+    // Finish the box. A tiny drag counts as a click: remove the top box under it.
+    canvas.addEventListener('pointerup', function (e) {
+      if (!drag) return;
+      var d = drag;
+      drag = null;
+      var minMove = canvas.width / 100;
+      if (Math.abs(d[2] - d[0]) < minMove && Math.abs(d[3] - d[1]) < minMove) {
+        for (var i = regions.length - 1; i >= 0; i--) {
+          var b = regions[i];
+          if (d[0] >= b[0] && d[0] <= b[2] && d[1] >= b[1] && d[1] <= b[3]) {
+            regions.splice(i, 1);
+            break;
+          }
+        }
+      } else {
+        regions.push([Math.min(d[0], d[2]), Math.min(d[1], d[3]),
+                      Math.max(d[0], d[2]), Math.max(d[1], d[3])].map(Math.round));
+      }
+      redraw();
+    });
+
+    // A cancelled touch should not leave a half-drawn box behind.
+    canvas.addEventListener('pointercancel', function () { drag = null; redraw(); });
+
+    // Send the photo (already in the page) plus the boxes to /refine and show the result.
+    document.getElementById('apply').addEventListener('click', async function () {
+      var btn = this;
+      var status = document.getElementById('status');
+      btn.disabled = true;
+      status.textContent = 'Applying...';
+      try {
+        var blob = await (await fetch(document.getElementById('orig').src)).blob();
+        var form = new FormData();
+        form.append('photo', blob, 'photo.jpg');
+        form.append('mode', document.getElementById('mode').value);
+        form.append('strength', document.getElementById('strength').value);
+        form.append('regions', JSON.stringify(regions));
+        var resp = await fetch('/refine', { method: 'POST', body: form });
+        var data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Could not apply the boxes.');
+        document.getElementById('prot').src = data.protected;
+        document.getElementById('download').href = data.protected;
+        document.getElementById('count_text').textContent = data.count + ' area' +
+          (data.count === 1 ? '' : 's') + ' hidden. Your download has all metadata removed.';
+        status.textContent = 'Updated.';
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+      }
+      btn.disabled = false;
+    });
+
+    // Remove every box (the Protected photo updates on the next Apply).
+    document.getElementById('clear').addEventListener('click', function () {
+      regions = [];
+      redraw();
+    });
+
+    redraw();
+  })();
+  </script>
 
   <div class="panel">
     <h2 style="margin-top:0">What this photo exposed</h2>
@@ -441,10 +618,7 @@ def home():
 def process():
     """Handle an upload: read metadata, find faces, hide them, show the results."""
     # Section 1: read the form values and keep them within allowed limits
-    mode = request.form.get("mode", "pixelate")
-    if mode not in MODES:
-        mode = "pixelate"
-    strength = min(10, max(1, request.form.get("strength", 6, type=int)))
+    mode, strength = read_options()
 
     file = request.files.get("photo")
     if file is None or file.filename == "":
@@ -463,22 +637,54 @@ def process():
             strength=strength,
         )
 
-    # Section 3: find and hide faces
-    boxes = detect_faces(bgr)
-    protected = protect_faces(bgr, boxes, mode, strength)
+    # Section 3: find faces, pad their boxes, and hide them
+    height, width = bgr.shape[:2]
+    regions = [pad_box(box, width, height) for box in detect_faces(bgr)]
+    protected = protect_regions(bgr, regions, mode, strength)
 
-    # Section 4: build the page
+    # Section 4: build the page (the regions go to the browser so boxes can be edited)
     result = {
-        "faces": len(boxes),
-        "original": to_data_uri(bgr, 80),
+        "count": len(regions),
+        "regions": regions,
+        "width": width,
+        "height": height,
+        "original": to_data_uri(bgr, 90),
         "protected": to_data_uri(protected, 90),
     }
     return render_page(result=result, meta=meta, mode=mode, strength=strength)
 
 
+@app.route("/refine", methods=["POST"])
+def refine():
+    """Re-apply hiding to the same photo using an edited list of boxes. Returns JSON.
+
+    The browser sends back the preview photo it already has, so the server keeps
+    no state and never writes anything to disk.
+    """
+    # Section 1: read the options and the photo
+    mode, strength = read_options()
+    file = request.files.get("photo")
+    if file is None:
+        return jsonify(error="No photo was sent."), 400
+    try:
+        bgr = prepare_image(Image.open(io.BytesIO(file.read())))
+    except Exception:
+        return jsonify(error="That image could not be read."), 400
+
+    # Section 2: clean the boxes from the browser and hide them
+    height, width = bgr.shape[:2]
+    regions = parse_regions(request.form.get("regions", "[]"), width, height)
+    protected = protect_regions(bgr, regions, mode, strength)
+
+    # Section 3: answer with the new protected photo
+    return jsonify(count=len(regions), protected=to_data_uri(protected, 90))
+
+
 @app.errorhandler(413)
 def too_large(_error):
     """Show a friendly message when the upload is bigger than MAX_UPLOAD_MB."""
+    if request.path == "/refine":
+        return jsonify(error=f"That photo is too large. The limit is {MAX_UPLOAD_MB} MB."), 413
     return render_page(error=f"That file is too large. The limit is {MAX_UPLOAD_MB} MB."), 413
 
 
