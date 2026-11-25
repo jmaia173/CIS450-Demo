@@ -1,0 +1,8 @@
+proto/
+template/
+media/
+README.md
+__pycache__/
+*.pyc
+.venv/
+.git/

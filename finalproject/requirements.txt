@@ -1,0 +1,5 @@
+flask
+opencv-python-headless<5
+numpy
+pillow
+pillow-heif
